@@ -11,6 +11,13 @@ can_separator = b'\xaa\x55\xaa\x55'         # 0xAA55AA55 used to separate packet
 #can_500_start = ''
 
 
+def converter(base16, format=10):
+    converted = int(base16, 16)
+    if format == 2:
+        converted = bin(converted)
+    return converted
+
+
 class readSerialPort(QThread):
     data = pyqtSignal(str)
 
