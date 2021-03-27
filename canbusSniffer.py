@@ -7,8 +7,7 @@ from PyQt5.QtWidgets import QApplication, QMainWindow
 from PyQt5.QtCore import QThread, pyqtSignal
 import canbusSnifferGUI
 
-can_separator = b'\xaa\x55\xaa\x55'         # 0xAA55AA55 used to separate packets
-#can_500_start = ''
+PREFIX = 'aa55aa55'
 
 
 def converter(base16, format=10):
@@ -28,18 +27,17 @@ class readSerialPort(QThread):
 
     def run(self):
         while self.window.serial_port.isOpen() and not self.stopFlag:
-            can_msg = self.window.serial_port.read_until(can_separator)
-            line = can_msg[:-4].decode('ascii')        # to remove last 4 bits 0xAA55AA55
+            can_msg = self.window.serial_port.readline()
+            line = can_msg.decode('latin1')[:-2]             # to remove \r\n at the end of the can_msg
             if len(line) > 0:
                 self.data.emit(line)
-                
+
     def send(self, packet):
         if self.window.serial_port.isOpen():
             self.window.serial_port.write(packet)
 
     def stop(self):
         self.stopFlag = True
-
 
 class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
     def __init__(self):
@@ -56,7 +54,7 @@ class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
         self.canbusSetStatus.repaint()
         self.canbusStatus.repaint()
 
-    def getSerialDevices(self):  
+    def getSerialDevices(self):
         devices = serial.tools.list_ports.comports()
         for device in devices:
             if device[0] != 'n/a':
@@ -77,7 +75,8 @@ class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
                     self.canbusSetStatus.setText('Disconnect')
                     self.guiRepaint()
                 except:
-                    self.canbusStatus.setText('Incorrect port')         
+                    self.canbusStatus.setText('Incorrect port')
+                    self.guiRepaint()
         else:
             self.readSerialPortThread.stop()
             self.readSerialPortThread.terminate()
@@ -88,28 +87,18 @@ class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
             self.guiRepaint()
 
     def getSerialData(self, line):
-        if len(line) > 4:
-            packet_id = line[:3]
-            packet_dlc = line[3]
-            packet_data = [line[i:i+2] for i in range(4, len(line), 2)]
-            self.checkPacket(packet_id, packet_dlc, packet_data)
+        packet_prefix, packet = [line[:len(PREFIX)], line[len(PREFIX):]]
+        if packet_prefix == PREFIX and len(packet) > 0:
+            packet_id, packet_dlc, data = packet.split(' ', 2)
+            packet_data = data.split(' ')
             self.sortSerialData(packet_id, packet_dlc, packet_data)
-
-    def checkPacket(self, p_id, p_dlc, p_data):
-        if p_id == '999':
-            if p_data[0] == '01':
-                print(p_data)
-                self.readSerialPortThread.send('9996can500'.encode('ascii'))
-            if p_data[0] == '02':
-                print(p_data)
-                self.readSerialPortThread.send('9998canstart'.encode('ascii'))
 
     def sortSerialData(self, p_id, p_len, p_data):
         new_byte = None
         rows = self.canbusDataReceived.rowCount()
         for i in range(rows):
             current_id = self.canbusDataReceived.item(i, 0).text()
-            if current_id == p_id and int(p_len) < 9:
+            if current_id == p_id and int(p_len) <= 8:
                 for j in range(int(p_len)):
                     old_byte = self.canbusDataReceived.item(i, j+2).text()
                     new_byte = p_data[j]
@@ -119,7 +108,7 @@ class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
                     if new_byte == old_byte:
                         self.canbusDataReceived.item(i, j+2).setBackground(QtGui.QColor('white'))
                 continue
-        if new_byte is None and p_len != '':
+        if new_byte is None and p_len != '' and p_len != '0':
             self.canbusDataReceived.insertRow(rows)
             self.canbusDataReceived.setItem(rows, 0, QtWidgets.QTableWidgetItem(p_id))
             self.canbusDataReceived.setItem(rows, 1, QtWidgets.QTableWidgetItem(p_len))
@@ -142,7 +131,7 @@ class Sniffer(QMainWindow, canbusSnifferGUI.Ui_canbusSniffer):
             print('Wrong packet structure')
         else:
             print('ID or DLC is missing')
-        
+
 
     def sendPacket(self):
         p = self.combinePacketToSend()
@@ -163,6 +152,7 @@ def main():
     window = Sniffer()
     window.show()
     app.exec()
+
 
 
 if __name__ == '__main__':
